@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-surface-bg text-ink-900 antialiased;
+  }
+  /* Prevent any horizontal scrolling on mobile */
+  html,
+  body {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+  input,
+  button,
+  select,
+  textarea {
+    font: inherit;
+  }
+  /* Visible keyboard focus ring everywhere */
+  :focus-visible {
+    outline: 2px solid theme("colors.brand.500");
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
