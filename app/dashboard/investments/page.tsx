@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatRupees, formatDate } from "@/lib/utils/format";
 import DownloadCsvButton from "@/components/DownloadCsvButton";
+import CloseInvestmentButtons from "./CloseInvestmentButtons";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 
@@ -209,6 +210,8 @@ export default async function InvestmentsPage() {
                   &quot;{inv.notes}&quot;
                 </p>
               )}
+
+              <CloseInvestmentButtons investmentId={inv.id} status={inv.status} />
             </div>
           );
         })}
