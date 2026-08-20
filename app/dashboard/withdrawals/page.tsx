@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatRupees, formatDate } from "@/lib/utils/format";
 import WithdrawalActions from "./WithdrawalActions";
 import DownloadCsvButton from "@/components/DownloadCsvButton";
+import WhatsAppLinkButton from "@/components/WhatsAppLinkButton";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 
@@ -23,7 +24,7 @@ type WithdrawalRow = {
   status: string;
   paid_date: string | null;
   investments: { investment_code: string } | null;
-  investors: { full_name: string; investor_code: string } | null;
+  investors: { full_name: string; investor_code: string; mobile: string | null } | null;
 };
 
 export default async function WithdrawalsPage() {
@@ -47,7 +48,7 @@ export default async function WithdrawalsPage() {
   const { data: requests, error } = await supabase
     .from("withdrawal_requests")
     .select(
-      "id, requested_amount, requested_date, eligible_date, status, paid_date, investments(investment_code), investors(full_name, investor_code)"
+      "id, requested_amount, requested_date, eligible_date, status, paid_date, investments(investment_code), investors(full_name, investor_code, mobile)"
     )
     .order("requested_date", { ascending: false })
     .returns<WithdrawalRow[]>();
@@ -147,8 +148,17 @@ export default async function WithdrawalsPage() {
               </p>
             )}
 
-            <div className="mt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <WithdrawalActions requestId={r.id} status={r.status} />
+              <WhatsAppLinkButton
+                mobile={r.investors?.mobile}
+                message={`Hi ${
+                  r.investors?.full_name ?? "there"
+                }, your withdrawal request for ₹${Number(r.requested_amount).toFixed(
+                  2
+                )} is currently ${r.status}.`}
+                label="Update"
+              />
             </div>
           </div>
         ))}

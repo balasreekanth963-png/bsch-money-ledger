@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatRupees, formatDate } from "@/lib/utils/format";
 import CreditInterestButton from "./CreditInterestButton";
 import DownloadCsvButton from "@/components/DownloadCsvButton";
+import WhatsAppLinkButton from "@/components/WhatsAppLinkButton";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 
@@ -17,7 +18,7 @@ type PeriodRow = {
   credited_date: string | null;
   investments: {
     investment_code: string;
-    investors: { full_name: string } | null;
+    investors: { full_name: string; mobile: string | null } | null;
   } | null;
 };
 
@@ -47,7 +48,7 @@ export default async function InterestPage() {
   const { data: periods, error } = await supabase
     .from("investment_interest_periods")
     .select(
-      "id, period_start, period_end, expected_interest, credited_interest, remaining_interest, status, credited_date, investments(investment_code, investors(full_name))"
+      "id, period_start, period_end, expected_interest, credited_interest, remaining_interest, status, credited_date, investments(investment_code, investors(full_name, mobile))"
     )
     .neq("status", "CREDITED")
     .lte("period_start", today)
@@ -152,10 +153,19 @@ export default async function InterestPage() {
                 </div>
               </div>
 
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <CreditInterestButton
                   periodId={p.id}
                   remainingAmount={parseFloat(p.remaining_interest)}
+                />
+                <WhatsAppLinkButton
+                  mobile={p.investments?.investors?.mobile}
+                  message={`Hi ${
+                    p.investments?.investors?.full_name ?? "there"
+                  }, a reminder that ₹${p.remaining_interest} interest is due for period ending ${formatDate(
+                    p.period_end
+                  )} on your investment ${p.investments?.investment_code ?? ""}.`}
+                  label="Remind"
                 />
               </div>
             </div>

@@ -36,7 +36,9 @@ export async function PATCH(
 
   const { data: reqRow } = await supabase
     .from("withdrawal_requests")
-    .select("id, company_id, investment_id, investor_id, requested_amount, status")
+    .select(
+      "id, company_id, investment_id, investor_id, requested_amount, status, investors(full_name, email)"
+    )
     .eq("id", params.id)
     .single();
 
@@ -131,8 +133,9 @@ export async function PATCH(
     });
   }
 
-  // Notification data trail (prep only — nothing is actually sent yet)
-  // for every status transition, not just the final payout.
+  // Notification data trail (prep only for other channels — email below
+  // is real, not just a log entry) for every status transition, not
+  // just the final payout.
   await supabase.from("notifications").insert({
     company_id: reqRow.company_id,
     investor_id: reqRow.investor_id,
@@ -143,6 +146,25 @@ export async function PATCH(
     )} is now ${String(updates.status)}.`,
     metadata: { previous_status: reqRow.status, new_status: updates.status },
   });
+
+  const investorInfo = Array.isArray(reqRow.investors) ? reqRow.investors[0] : reqRow.investors;
+  const recipients = [investorInfo?.email, user.email].filter(
+    (e): e is string => Boolean(e)
+  );
+  if (recipients.length > 0) {
+    const { sendEmail } = await import("@/lib/email/resend");
+    await sendEmail({
+      to: recipients,
+      subject: `Withdrawal Request Update — ₹${Number(reqRow.requested_amount).toFixed(2)}`,
+      html: `
+        <p>Hi ${investorInfo?.full_name ?? "there"},</p>
+        <p>Your withdrawal request for <strong>₹${Number(reqRow.requested_amount).toFixed(
+          2
+        )}</strong> is now <strong>${String(updates.status)}</strong>.</p>
+        <p>— Sodhara Investments</p>
+      `,
+    });
+  }
 
   return NextResponse.json({ status: updates.status });
 }

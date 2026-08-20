@@ -38,7 +38,7 @@ export async function POST(
   const { data: period, error: periodErr } = await supabase
     .from("investment_interest_periods")
     .select(
-      "id, investment_id, expected_interest, credited_interest, status, investments(id, investor_id, company_id)"
+      "id, investment_id, expected_interest, credited_interest, status, investments(id, investor_id, company_id, investment_code, investors(full_name, email))"
     )
     .eq("id", periodId)
     .single();
@@ -57,6 +57,10 @@ export async function POST(
       { status: 403 }
     );
   }
+
+  const investorInfo = Array.isArray(investment.investors)
+    ? investment.investors[0]
+    : investment.investors;
 
   const body = await request.json().catch(() => ({}));
   const expected = parseFloat(period.expected_interest);
@@ -123,8 +127,8 @@ export async function POST(
     new_data: { credited_interest: newCredited, status: newStatus },
   });
 
-  // Notification data trail (prep only — nothing is actually sent yet).
-  // A future WhatsApp/SMS worker reads PENDING rows from here.
+  // Notification data trail (prep only for other channels — but email
+  // sending below is real, not just a log entry).
   await supabase.from("notifications").insert({
     company_id: profile.company_id,
     investor_id: investment.investor_id,
@@ -134,6 +138,26 @@ export async function POST(
     message: `Interest of ₹${requestedAmount.toFixed(2)} was credited to your investment.`,
     metadata: { amount: requestedAmount, credited_date: today },
   });
+
+  // Best-effort email to the investor, with the admin who performed the
+  // action CC'd. Never lets an email failure break the actual crediting
+  // that already succeeded above — errors are logged, not thrown.
+  const recipients = [investorInfo?.email, user.email].filter(
+    (e): e is string => Boolean(e)
+  );
+  if (recipients.length > 0) {
+    const { sendEmail } = await import("@/lib/email/resend");
+    await sendEmail({
+      to: recipients,
+      subject: `Interest Credited — ${investment.investment_code}`,
+      html: `
+        <p>Hi ${investorInfo?.full_name ?? "there"},</p>
+        <p><strong>₹${requestedAmount.toFixed(2)}</strong> interest has been credited
+        to your investment <strong>${investment.investment_code}</strong> on ${today}.</p>
+        <p>— Sodhara Investments</p>
+      `,
+    });
+  }
 
   return NextResponse.json({ credited_interest: newCredited, status: newStatus });
 }

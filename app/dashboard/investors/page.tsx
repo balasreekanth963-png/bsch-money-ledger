@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatRupees } from "@/lib/utils/format";
 import DownloadCsvButton from "@/components/DownloadCsvButton";
+import WhatsAppLinkButton from "@/components/WhatsAppLinkButton";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 
@@ -142,6 +143,19 @@ export default async function InvestorsPage() {
               <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-500">
                 {inv.mobile && <span>📱 {inv.mobile}</span>}
                 {inv.email && <span>✉️ {inv.email}</span>}
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <WhatsAppLinkButton
+                  mobile={inv.mobile}
+                  message={`Hi ${inv.full_name}, this is Sodhara Investments reaching out regarding your investment(s). Let us know if you have any questions.`}
+                />
+                <Link
+                  href={`/dashboard/investors/${inv.id}/edit`}
+                  className="rounded-lg border border-surface-border px-3 py-2 text-xs font-semibold text-ink-700"
+                >
+                  Edit
+                </Link>
               </div>
 
               <div className="mt-3 flex items-center justify-between border-t border-surface-border pt-3">
