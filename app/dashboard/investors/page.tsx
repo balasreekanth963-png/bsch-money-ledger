@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { formatRupees } from "@/lib/utils/format";
 import DownloadCsvButton from "@/components/DownloadCsvButton";
 import WhatsAppLinkButton from "@/components/WhatsAppLinkButton";
+import DeactivateInvestorButton from "./DeactivateInvestorButton";
+import ManageLoginButton from "./ManageLoginButton";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 
@@ -156,6 +158,12 @@ export default async function InvestorsPage() {
                 >
                   Edit
                 </Link>
+                <ManageLoginButton investorId={inv.id} fullName={inv.full_name} />
+                <DeactivateInvestorButton
+                  investorId={inv.id}
+                  status={inv.status}
+                  fullName={inv.full_name}
+                />
               </div>
 
               <div className="mt-3 flex items-center justify-between border-t border-surface-border pt-3">

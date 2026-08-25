@@ -7,6 +7,12 @@ const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
 const ACTION_STYLES: Record<string, string> = {
   CREDIT_INTEREST: "bg-positive-50 text-positive-700",
   WITHDRAWAL_PAID: "bg-brand-50 text-brand-700",
+  LOGIN_ACCOUNT_CREATED: "bg-brand-50 text-brand-700",
+  TEMP_PASSWORD_GENERATED: "bg-warning-50 text-warning-700",
+  PASSWORD_RESET: "bg-warning-50 text-warning-700",
+  FORCE_PASSWORD_CHANGE_SET: "bg-warning-50 text-warning-700",
+  PASSWORD_RECOVERY_EMAIL_SENT: "bg-brand-50 text-brand-700",
+  PASSWORD_CHANGED: "bg-positive-50 text-positive-700",
 };
 
 type AuditRow = {

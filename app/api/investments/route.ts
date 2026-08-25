@@ -1,14 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateCode } from "@/lib/utils/codes";
+import { addMonthsUTC } from "@/lib/utils/dates";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
-
-function addMonthsUTC(dateStr: string, months: number): string {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
 
 export async function POST(request: Request) {
   const supabase = createClient();

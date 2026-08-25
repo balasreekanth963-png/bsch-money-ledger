@@ -211,6 +211,17 @@ export default async function InvestmentsPage() {
                 </p>
               )}
 
+              {inv.status === "active" && (
+                <div className="mt-3 border-t border-surface-border pt-3">
+                  <Link
+                    href={`/dashboard/investments/${inv.id}/edit`}
+                    className="inline-block rounded-lg border border-surface-border px-3 py-2 text-xs font-semibold text-ink-700"
+                  >
+                    Edit
+                  </Link>
+                </div>
+              )}
+
               <CloseInvestmentButtons investmentId={inv.id} status={inv.status} />
             </div>
           );

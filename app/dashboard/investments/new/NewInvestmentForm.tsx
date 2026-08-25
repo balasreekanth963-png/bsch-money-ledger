@@ -15,6 +15,8 @@ type SuccessResult = {
   warning?: string;
 };
 
+const TENURE_YEARS = Array.from({ length: 10 }, (_, i) => String(i + 1)); // "1".."10"
+
 export default function NewInvestmentForm({
   investors,
 }: {
@@ -29,7 +31,7 @@ export default function NewInvestmentForm({
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
-  const [periodMonths, setPeriodMonths] = useState("12");
+  const [tenureYears, setTenureYears] = useState("1");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +47,10 @@ export default function NewInvestmentForm({
       !principalAmount ||
       Number(principalAmount) <= 0 ||
       !startDate ||
-      !periodMonths ||
-      Number(periodMonths) <= 0
+      !tenureYears
     ) {
       setError(
-        "Investor, a positive investment amount, start date, and period are all required."
+        "Investor, a positive investment amount, start date, and tenure are all required."
       );
       return;
     }
@@ -65,7 +66,7 @@ export default function NewInvestmentForm({
           interestRate: Number(interestRate),
           interestFrequency,
           startDate,
-          periodMonths: Number(periodMonths),
+          periodMonths: Number(tenureYears) * 12,
           notes: notes.trim(),
         }),
       });
@@ -210,19 +211,23 @@ export default function NewInvestmentForm({
         </div>
         <div>
           <label className="block text-sm font-semibold text-ink-700">
-            Period (months)
+            Investment Tenure (Years)
           </label>
-          <input
-            type="number"
-            min="1"
-            value={periodMonths}
-            onChange={(e) => setPeriodMonths(e.target.value)}
+          <select
+            value={tenureYears}
+            onChange={(e) => setTenureYears(e.target.value)}
             className="mt-1.5 w-full rounded-xl border border-surface-border bg-white px-4 py-3 text-base text-ink-900 outline-none focus:border-brand-500"
-          />
+          >
+            {TENURE_YEARS.map((y) => (
+              <option key={y} value={y}>
+                {y} {y === "1" ? "year" : "years"}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
       <p className="mt-1.5 text-xs text-ink-500">
-        Maturity and withdrawal eligibility default to Start Date + Period.
+        Maturity and withdrawal eligibility default to Start Date + Tenure.
       </p>
 
       <label className="mt-4 block text-sm font-semibold text-ink-700">
