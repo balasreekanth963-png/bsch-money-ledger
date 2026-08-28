@@ -2,8 +2,9 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Refreshes the Supabase auth session on every request and decides
- * whether a route needs a logged-in BSCH client (tenant) to proceed.
+ * Keep middleware lightweight: refresh the Supabase auth session and handle
+ * authentication redirects only. Database/profile checks belong in pages or
+ * server components, not in Edge Middleware.
  */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({
@@ -35,7 +36,6 @@ export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const isProtectedRoute = path.startsWith("/dashboard");
   const isLoginRoute = path.startsWith("/login");
-  const isChangePasswordRoute = path.startsWith("/dashboard/change-password");
 
   if (!user && isProtectedRoute) {
     const redirectUrl = request.nextUrl.clone();
@@ -47,23 +47,6 @@ export async function updateSession(request: NextRequest) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);
-  }
-
-  // Forced password change gate. Only investors coming off a temporary
-  // password get flagged, and this is the single place that enforces it —
-  // every /dashboard/* page benefits without needing its own check.
-  if (user && isProtectedRoute && !isChangePasswordRoute) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("must_change_password")
-      .eq("auth_user_id", user.id)
-      .single();
-
-    if (profile?.must_change_password) {
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/dashboard/change-password";
-      return NextResponse.redirect(redirectUrl);
-    }
   }
 
   return response;
