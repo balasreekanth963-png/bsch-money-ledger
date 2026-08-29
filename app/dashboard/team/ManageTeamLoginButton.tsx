@@ -3,11 +3,11 @@
 import { useState } from "react";
 import ManageLoginModal from "@/components/ManageLoginModal";
 
-export default function ManageLoginButton({
-  investorId,
+export default function ManageTeamLoginButton({
+  profileId,
   fullName,
 }: {
-  investorId: string;
+  profileId: string;
   fullName: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -22,9 +22,9 @@ export default function ManageLoginButton({
       </button>
       {open && (
         <ManageLoginModal
-          apiBasePath={`/api/investors/${investorId}`}
+          apiBasePath={`/api/profiles/${profileId}`}
           fullName={fullName}
-          allowCreateAccount
+          allowCreateAccount={false}
           onClose={() => setOpen(false)}
         />
       )}

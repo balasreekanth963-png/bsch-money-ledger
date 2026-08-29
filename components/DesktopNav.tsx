@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const NAV_ITEMS = [
+const MANAGER_ROLES = ["COMPANY_ADMIN", "PLATFORM_ADMIN"];
+
+const BASE_NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/investors", label: "Investors" },
   { href: "/dashboard/investments", label: "Investments" },
@@ -15,18 +17,28 @@ const NAV_ITEMS = [
   { href: "/dashboard/audit", label: "Audit Log" },
 ];
 
+const TEAM_NAV_ITEM = { href: "/dashboard/team", label: "Team" };
+
 /**
  * Horizontal nav shown only on desktop (md+), where BottomNav is hidden.
  * Without this, routes like /dashboard/investors had no visible entry
  * point at all outside mobile — this fixes that gap.
+ *
+ * "Team" is only added for Company/Platform Admins — the same
+ * restriction /dashboard/team and the More page already enforce — so
+ * Staff and investors aren't shown a link that just bounces them back.
  */
-export default function DesktopNav() {
+export default function DesktopNav({ role }: { role: string | null }) {
   const pathname = usePathname();
+  const navItems =
+    role && MANAGER_ROLES.includes(role)
+      ? [...BASE_NAV_ITEMS, TEAM_NAV_ITEM]
+      : BASE_NAV_ITEMS;
 
   return (
     <nav className="hidden border-t border-white/15 md:block">
       <div className="mx-auto flex max-w-4xl gap-1 px-4">
-        {NAV_ITEMS.map(({ href, label }) => {
+        {navItems.map(({ href, label }) => {
           const active =
             href === "/dashboard"
               ? pathname === "/dashboard"

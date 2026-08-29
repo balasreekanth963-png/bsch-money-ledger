@@ -20,6 +20,12 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("auth_user_id", user.id)
+    .single();
+
   return (
     <div className="flex min-h-screen flex-col pb-20 md:pb-0">
       <header className="sticky top-0 z-30 bg-brand-gradient shadow-card">
@@ -27,7 +33,7 @@ export default async function DashboardLayout({
           <SodharaBrand size="sm" variant="light" />
           <SignOutButton />
         </div>
-        <DesktopNav />
+        <DesktopNav role={profile?.role ?? null} />
       </header>
 
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-5">

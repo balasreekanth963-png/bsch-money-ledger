@@ -3,14 +3,21 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
+const MANAGER_ROLES = ["COMPANY_ADMIN", "PLATFORM_ADMIN"];
 
-const LINKS = [
+const BASE_LINKS = [
   { href: "/dashboard/investments", label: "Investments", desc: "Every investment, all details" },
   { href: "/dashboard/interest", label: "Interest Crediting", desc: "Credit interest owed to investors" },
   { href: "/dashboard/withdrawals", label: "Withdrawal Requests", desc: "Review, approve, mark paid" },
   { href: "/dashboard/notifications", label: "Notifications", desc: "Event log — not yet sent anywhere" },
   { href: "/dashboard/audit", label: "Audit Log", desc: "Who changed what, and when" },
 ];
+
+const TEAM_LINK = {
+  href: "/dashboard/team",
+  label: "Team",
+  desc: "Admin & staff logins — reset a colleague's password",
+};
 
 export default async function MorePage() {
   const supabase = createClient();
@@ -30,6 +37,10 @@ export default async function MorePage() {
     redirect("/dashboard");
   }
 
+  const links = MANAGER_ROLES.includes(profile.role)
+    ? [...BASE_LINKS, TEAM_LINK]
+    : BASE_LINKS;
+
   return (
     <div>
       <div className="mb-5">
@@ -38,7 +49,7 @@ export default async function MorePage() {
       </div>
 
       <div className="space-y-2">
-        {LINKS.map((l) => (
+        {links.map((l) => (
           <Link
             key={l.href}
             href={l.href}

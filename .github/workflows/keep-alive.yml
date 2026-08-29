@@ -1,0 +1,26 @@
+name: Keep Supabase Awake
+
+# Supabase's free tier pauses a project after 7 days with no database
+# activity. This runs every 3 days — well inside that window, so even a
+# missed run or two still won't let the project pause. Completely free:
+# GitHub Actions gives every account free scheduled-workflow minutes, and
+# this job finishes in a couple of seconds.
+
+on:
+  schedule:
+    - cron: "0 6 */3 * *" # 6 AM UTC (11:30 AM IST), every 3 days
+  workflow_dispatch: {} # lets you also trigger it manually from the Actions tab, to test
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping keep-alive endpoint
+        run: |
+          response=$(curl -s -o /tmp/response.json -w "%{http_code}" https://bsch-money-ledger.vercel.app/api/keep-alive)
+          echo "HTTP status: $response"
+          cat /tmp/response.json
+          if [ "$response" -ne 200 ]; then
+            echo "Keep-alive ping failed with status $response"
+            exit 1
+          fi

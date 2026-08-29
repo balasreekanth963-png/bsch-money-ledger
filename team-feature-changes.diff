@@ -1,0 +1,614 @@
+diff --git a/app/api/profiles/[id]/manage-login/route.ts b/app/api/profiles/[id]/manage-login/route.ts
+new file mode 100644
+index 0000000..22989bf
+--- /dev/null
++++ b/app/api/profiles/[id]/manage-login/route.ts
+@@ -0,0 +1,284 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
++import { generateTempPassword } from "@/lib/utils/codes";
++
++// Only these two roles may manage another admin/staff member's login.
++// Plain STAFF cannot reach this route at all — resetting a colleague's
++// (or a COMPANY_ADMIN's) password is a privilege-escalation risk, so it's
++// deliberately narrower than the investor-management ADMIN_ROLES set.
++const MANAGER_ROLES = ["COMPANY_ADMIN", "PLATFORM_ADMIN"];
++
++// Roles this route is allowed to target at all. Investors are managed
++// through /api/investors/[id]/manage-login instead — this keeps the two
++// flows (and their audit trails) clearly separated.
++const TEAM_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
++
++type AuditAction =
++  | "TEMP_PASSWORD_GENERATED"
++  | "PASSWORD_RESET"
++  | "FORCE_PASSWORD_CHANGE_SET"
++  | "PASSWORD_RECOVERY_EMAIL_SENT";
++
++async function requireManager() {
++  const supabase = createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++
++  if (!user) {
++    return { error: NextResponse.json({ error: "Not signed in." }, { status: 401 }) };
++  }
++
++  const { data: profile } = await supabase
++    .from("profiles")
++    .select("id, role, company_id")
++    .eq("auth_user_id", user.id)
++    .single();
++
++  if (!profile || !MANAGER_ROLES.includes(profile.role) || !profile.company_id) {
++    return {
++      error: NextResponse.json(
++        { error: "Only a Company Admin can manage another team member's login." },
++        { status: 403 }
++      ),
++    };
++  }
++
++  return { supabase, profile };
++}
++
++/**
++ * Loads the target team member, scoped to the caller's own company, and
++ * enforces the privilege hierarchy: a COMPANY_ADMIN cannot manage a
++ * PLATFORM_ADMIN's login. Also blocks targeting your own account through
++ * this route — forgetting your own current password means you can't be
++ * signed in to use it anyway, and self-service here would be confusing
++ * to audit.
++ */
++async function loadTarget(
++  supabase: ReturnType<typeof createClient>,
++  callerProfileId: string,
++  callerRole: string,
++  companyId: string,
++  targetProfileId: string
++) {
++  if (targetProfileId === callerProfileId) {
++    return { error: "You can't manage your own login from here." };
++  }
++
++  const { data: target } = await supabase
++    .from("profiles")
++    .select("id, role, full_name, email, auth_user_id, must_change_password")
++    .eq("id", targetProfileId)
++    .eq("company_id", companyId)
++    .maybeSingle();
++
++  if (!target) {
++    return { error: "Team member not found in your company." };
++  }
++
++  if (!TEAM_ROLES.includes(target.role)) {
++    return { error: "Investors are managed from the Investors page instead." };
++  }
++
++  if (target.role === "PLATFORM_ADMIN" && callerRole !== "PLATFORM_ADMIN") {
++    return { error: "Only a Platform Admin can manage another Platform Admin's login." };
++  }
++
++  return { target };
++}
++
++async function writeAudit(
++  supabase: ReturnType<typeof createClient>,
++  companyId: string,
++  actorProfileId: string,
++  action: AuditAction,
++  recordId: string
++) {
++  await supabase.from("audit_logs").insert({
++    company_id: companyId,
++    actor_profile_id: actorProfileId,
++    action,
++    table_name: "profiles",
++    record_id: recordId,
++    old_data: null,
++    new_data: { event: action },
++  });
++}
++
++// ---------------------------------------------------------------------------
++// GET — same shape as the investor version: email, account status, last
++// sign-in, pending-change flag.
++// ---------------------------------------------------------------------------
++export async function GET(
++  request: Request,
++  { params }: { params: { id: string } }
++) {
++  const auth = await requireManager();
++  if ("error" in auth) return auth.error;
++  const { supabase, profile } = auth;
++
++  const found = await loadTarget(supabase, profile.id, profile.role, profile.company_id, params.id);
++  if ("error" in found) {
++    return NextResponse.json({ error: found.error }, { status: 400 });
++  }
++  const { target } = found;
++
++  if (!target.auth_user_id) {
++    return NextResponse.json({ hasAuthAccount: false, email: target.email });
++  }
++
++  let admin;
++  try {
++    admin = createAdminClient();
++  } catch (e) {
++    return NextResponse.json(
++      { error: e instanceof Error ? e.message : "Server misconfigured." },
++      { status: 500 }
++    );
++  }
++
++  const { data: authUser, error: getUserErr } = await admin.auth.admin.getUserById(target.auth_user_id);
++
++  if (getUserErr || !authUser?.user) {
++    return NextResponse.json({
++      hasAuthAccount: false,
++      email: target.email,
++      warning: "This team member's login reference is broken — the linked Auth account no longer exists.",
++    });
++  }
++
++  const bannedUntil = authUser.user.banned_until;
++  const isDisabled = !!bannedUntil && new Date(bannedUntil).getTime() > Date.now();
++
++  return NextResponse.json({
++    hasAuthAccount: true,
++    email: authUser.user.email,
++    accountStatus: isDisabled ? "Disabled" : "Active",
++    lastSignInAt: authUser.user.last_sign_in_at ?? null,
++    mustChangePassword: !!target.must_change_password,
++  });
++}
++
++// ---------------------------------------------------------------------------
++// POST — generate/reset temp password, force a change, or send recovery.
++// No "create_login_account" here — every admin/staff profile already has
++// an Auth account by construction (they signed themselves up or were
++// seeded directly), unlike investors who can predate that flow.
++// ---------------------------------------------------------------------------
++export async function POST(
++  request: Request,
++  { params }: { params: { id: string } }
++) {
++  const auth = await requireManager();
++  if ("error" in auth) return auth.error;
++  const { supabase, profile } = auth;
++
++  const body = await request.json().catch(() => null);
++  const action = body?.action as
++    | "generate_temp_password"
++    | "reset_password"
++    | "force_password_change"
++    | "send_recovery_email"
++    | undefined;
++
++  if (!action) {
++    return NextResponse.json({ error: "Missing action." }, { status: 400 });
++  }
++
++  const found = await loadTarget(supabase, profile.id, profile.role, profile.company_id, params.id);
++  if ("error" in found) {
++    return NextResponse.json({ error: found.error }, { status: 400 });
++  }
++  const { target } = found;
++
++  if (!target.auth_user_id) {
++    return NextResponse.json(
++      { error: "This team member has no login account. They need to sign up first." },
++      { status: 400 }
++    );
++  }
++
++  let admin;
++  try {
++    admin = createAdminClient();
++  } catch (e) {
++    return NextResponse.json(
++      { error: e instanceof Error ? e.message : "Server misconfigured." },
++      { status: 500 }
++    );
++  }
++
++  if (action === "generate_temp_password" || action === "reset_password") {
++    const tempPassword = generateTempPassword();
++    const { error: pwErr } = await admin.auth.admin.updateUserById(target.auth_user_id, {
++      password: tempPassword,
++    });
++
++    if (pwErr) {
++      return NextResponse.json({ error: pwErr.message }, { status: 400 });
++    }
++
++    const { error: flagErr } = await supabase
++      .from("profiles")
++      .update({ must_change_password: true })
++      .eq("id", target.id);
++
++    if (flagErr) {
++      return NextResponse.json({ error: flagErr.message }, { status: 400 });
++    }
++
++    await writeAudit(
++      supabase,
++      profile.company_id,
++      profile.id,
++      action === "generate_temp_password" ? "TEMP_PASSWORD_GENERATED" : "PASSWORD_RESET",
++      target.id
++    );
++
++    return NextResponse.json({
++      ok: true,
++      tempPassword,
++      warning: "Save this temporary password now. It will not be shown again.",
++    });
++  }
++
++  if (action === "force_password_change") {
++    const { error: flagErr } = await supabase
++      .from("profiles")
++      .update({ must_change_password: true })
++      .eq("id", target.id);
++
++    if (flagErr) {
++      return NextResponse.json({ error: flagErr.message }, { status: 400 });
++    }
++
++    await writeAudit(supabase, profile.company_id, profile.id, "FORCE_PASSWORD_CHANGE_SET", target.id);
++
++    return NextResponse.json({
++      ok: true,
++      message: "This team member will be asked to set a new password the next time they sign in.",
++    });
++  }
++
++  if (action === "send_recovery_email") {
++    if (!target.email) {
++      return NextResponse.json({ error: "This team member has no email on file." }, { status: 400 });
++    }
++
++    const { error: recoveryErr } = await supabase.auth.resetPasswordForEmail(target.email, {
++      redirectTo: undefined,
++    });
++
++    if (recoveryErr) {
++      return NextResponse.json({ error: "Could not send the recovery email. Please try again." }, { status: 400 });
++    }
++
++    await writeAudit(supabase, profile.company_id, profile.id, "PASSWORD_RECOVERY_EMAIL_SENT", target.id);
++
++    return NextResponse.json({ ok: true, message: "Password recovery email sent successfully." });
++  }
++
++  return NextResponse.json({ error: "Unknown action." }, { status: 400 });
++}
+diff --git a/app/dashboard/investors/ManageLoginButton.tsx b/app/dashboard/investors/ManageLoginButton.tsx
+index a1cbd79..8475554 100644
+--- a/app/dashboard/investors/ManageLoginButton.tsx
++++ b/app/dashboard/investors/ManageLoginButton.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import { useState } from "react";
+-import ManageLoginModal from "./ManageLoginModal";
++import ManageLoginModal from "@/components/ManageLoginModal";
+ 
+ export default function ManageLoginButton({
+   investorId,
+@@ -22,8 +22,9 @@ export default function ManageLoginButton({
+       </button>
+       {open && (
+         <ManageLoginModal
+-          investorId={investorId}
++          apiBasePath={`/api/investors/${investorId}`}
+           fullName={fullName}
++          allowCreateAccount
+           onClose={() => setOpen(false)}
+         />
+       )}
+diff --git a/app/dashboard/more/page.tsx b/app/dashboard/more/page.tsx
+index 984df50..f4705aa 100644
+--- a/app/dashboard/more/page.tsx
++++ b/app/dashboard/more/page.tsx
+@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
+ import { createClient } from "@/lib/supabase/server";
+ 
+ const ADMIN_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
++const MANAGER_ROLES = ["COMPANY_ADMIN", "PLATFORM_ADMIN"];
+ 
+-const LINKS = [
++const BASE_LINKS = [
+   { href: "/dashboard/investments", label: "Investments", desc: "Every investment, all details" },
+   { href: "/dashboard/interest", label: "Interest Crediting", desc: "Credit interest owed to investors" },
+   { href: "/dashboard/withdrawals", label: "Withdrawal Requests", desc: "Review, approve, mark paid" },
+@@ -12,6 +13,12 @@ const LINKS = [
+   { href: "/dashboard/audit", label: "Audit Log", desc: "Who changed what, and when" },
+ ];
+ 
++const TEAM_LINK = {
++  href: "/dashboard/team",
++  label: "Team",
++  desc: "Admin & staff logins — reset a colleague's password",
++};
++
+ export default async function MorePage() {
+   const supabase = createClient();
+   const {
+@@ -30,6 +37,10 @@ export default async function MorePage() {
+     redirect("/dashboard");
+   }
+ 
++  const links = MANAGER_ROLES.includes(profile.role)
++    ? [...BASE_LINKS, TEAM_LINK]
++    : BASE_LINKS;
++
+   return (
+     <div>
+       <div className="mb-5">
+@@ -38,7 +49,7 @@ export default async function MorePage() {
+       </div>
+ 
+       <div className="space-y-2">
+-        {LINKS.map((l) => (
++        {links.map((l) => (
+           <Link
+             key={l.href}
+             href={l.href}
+diff --git a/app/dashboard/team/ManageTeamLoginButton.tsx b/app/dashboard/team/ManageTeamLoginButton.tsx
+new file mode 100644
+index 0000000..d696ed1
+--- /dev/null
++++ b/app/dashboard/team/ManageTeamLoginButton.tsx
+@@ -0,0 +1,33 @@
++"use client";
++
++import { useState } from "react";
++import ManageLoginModal from "@/components/ManageLoginModal";
++
++export default function ManageTeamLoginButton({
++  profileId,
++  fullName,
++}: {
++  profileId: string;
++  fullName: string;
++}) {
++  const [open, setOpen] = useState(false);
++
++  return (
++    <>
++      <button
++        onClick={() => setOpen(true)}
++        className="rounded-lg border border-surface-border px-3 py-2 text-xs font-semibold text-ink-700"
++      >
++        Manage Login
++      </button>
++      {open && (
++        <ManageLoginModal
++          apiBasePath={`/api/profiles/${profileId}`}
++          fullName={fullName}
++          allowCreateAccount={false}
++          onClose={() => setOpen(false)}
++        />
++      )}
++    </>
++  );
++}
+diff --git a/app/dashboard/team/page.tsx b/app/dashboard/team/page.tsx
+new file mode 100644
+index 0000000..c521cba
+--- /dev/null
++++ b/app/dashboard/team/page.tsx
+@@ -0,0 +1,114 @@
++import { redirect } from "next/navigation";
++import { createClient } from "@/lib/supabase/server";
++import ManageTeamLoginButton from "./ManageTeamLoginButton";
++
++// Narrower than the usual ADMIN_ROLES set used elsewhere: viewing/managing
++// teammates' logins is itself a privilege-escalation-sensitive screen, so
++// plain STAFF cannot even see this page.
++const MANAGER_ROLES = ["COMPANY_ADMIN", "PLATFORM_ADMIN"];
++const TEAM_ROLES = ["COMPANY_ADMIN", "STAFF", "PLATFORM_ADMIN"];
++
++const ROLE_LABELS: Record<string, string> = {
++  COMPANY_ADMIN: "Company Admin",
++  STAFF: "Staff",
++  PLATFORM_ADMIN: "Platform Admin",
++};
++
++type TeamMember = {
++  id: string;
++  full_name: string;
++  email: string | null;
++  role: string;
++};
++
++export default async function TeamPage() {
++  const supabase = createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++
++  if (!user) redirect("/login");
++
++  const { data: profile } = await supabase
++    .from("profiles")
++    .select("id, role, company_id")
++    .eq("auth_user_id", user.id)
++    .single();
++
++  if (!profile || !MANAGER_ROLES.includes(profile.role) || !profile.company_id) {
++    redirect("/dashboard");
++  }
++
++  const { data: team, error } = await supabase
++    .from("profiles")
++    .select("id, full_name, email, role")
++    .eq("company_id", profile.company_id)
++    .in("role", TEAM_ROLES)
++    .order("full_name")
++    .returns<TeamMember[]>();
++
++  return (
++    <div>
++      <div className="mb-5">
++        <p className="text-xl font-extrabold tracking-tight text-ink-900">Team</p>
++        <p className="text-sm text-ink-500">
++          Admin &amp; staff accounts — reset a colleague&apos;s password if
++          they&apos;re ever locked out.
++        </p>
++      </div>
++
++      {error && (
++        <div className="rounded-xl2 border border-dashed border-danger-200 bg-danger-50 p-4 text-sm text-danger-700">
++          Could not load the team: {error.message}
++        </div>
++      )}
++
++      {!error && (!team || team.length === 0) && (
++        <div className="rounded-xl2 border border-dashed border-surface-border bg-white p-4 text-sm text-ink-500">
++          No other team members yet.
++        </div>
++      )}
++
++      <div className="space-y-3">
++        {team?.map((member) => {
++          const isSelf = member.id === profile.id;
++          const isProtected = member.role === "PLATFORM_ADMIN" && profile.role !== "PLATFORM_ADMIN";
++
++          return (
++            <div
++              key={member.id}
++              className="rounded-xl2 border border-surface-border bg-white p-4 shadow-card"
++            >
++              <div className="flex items-start justify-between">
++                <div>
++                  <p className="text-base font-bold text-ink-900">
++                    {member.full_name}
++                    {isSelf && <span className="ml-2 text-xs font-medium text-ink-500">(you)</span>}
++                  </p>
++                  {member.email && <p className="text-xs text-ink-500">{member.email}</p>}
++                </div>
++                <span className="rounded-full bg-surface-bg px-2.5 py-1 text-[11px] font-semibold text-ink-700">
++                  {ROLE_LABELS[member.role] ?? member.role}
++                </span>
++              </div>
++
++              <div className="mt-3 border-t border-surface-border pt-3">
++                {isSelf ? (
++                  <p className="text-xs text-ink-500">
++                    Use your normal account settings to change your own password.
++                  </p>
++                ) : isProtected ? (
++                  <p className="text-xs text-ink-500">
++                    Only a Platform Admin can manage this account&apos;s login.
++                  </p>
++                ) : (
++                  <ManageTeamLoginButton profileId={member.id} fullName={member.full_name} />
++                )}
++              </div>
++            </div>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
+diff --git a/app/dashboard/investors/ManageLoginModal.tsx b/components/ManageLoginModal.tsx
+similarity index 90%
+rename from app/dashboard/investors/ManageLoginModal.tsx
+rename to components/ManageLoginModal.tsx
+index c14ab29..fc50b9a 100644
+--- a/app/dashboard/investors/ManageLoginModal.tsx
++++ b/components/ManageLoginModal.tsx
+@@ -27,15 +27,20 @@ function formatLastSignIn(iso: string | null | undefined): string {
+ }
+ 
+ export default function ManageLoginModal({
+-  investorId,
++  apiBasePath,
+   fullName,
++  allowCreateAccount = true,
+   onClose,
+ }: {
+-  investorId: string;
++  /** e.g. "/api/investors/abc123" or "/api/profiles/abc123" — the modal appends "/manage-login" itself. */
++  apiBasePath: string;
+   fullName: string;
++  /** Team members always already have an auth account; investors may not. */
++  allowCreateAccount?: boolean;
+   onClose: () => void;
+ }) {
+   const router = useRouter();
++  const endpoint = `${apiBasePath}/manage-login`;
+   const [info, setInfo] = useState<LoginInfo | null>(null);
+   const [loadError, setLoadError] = useState<string | null>(null);
+   const [actionLoading, setActionLoading] = useState<string | null>(null);
+@@ -48,7 +53,7 @@ export default function ManageLoginModal({
+   async function loadInfo() {
+     setLoadError(null);
+     try {
+-      const res = await fetch(`/api/investors/${investorId}/manage-login`);
++      const res = await fetch(endpoint);
+       const data = await res.json();
+       if (!res.ok) {
+         setLoadError(data.error ?? "Could not load login information.");
+@@ -63,7 +68,7 @@ export default function ManageLoginModal({
+   useEffect(() => {
+     loadInfo();
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [investorId]);
++  }, [endpoint]);
+ 
+   async function runAction(action: string, context: string) {
+     if (actionLoading) return;
+@@ -71,7 +76,7 @@ export default function ManageLoginModal({
+     setActionMessage(null);
+     setActionLoading(action);
+     try {
+-      const res = await fetch(`/api/investors/${investorId}/manage-login`, {
++      const res = await fetch(endpoint, {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ action }),
+@@ -158,13 +163,19 @@ export default function ManageLoginModal({
+               {info.email && (
+                 <p className="mt-1 text-xs text-ink-500">{info.email}</p>
+               )}
+-              <button
+-                onClick={() => runAction("create_login_account", "New login account")}
+-                disabled={actionLoading !== null}
+-                className="mt-3 w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
+-              >
+-                {actionLoading === "create_login_account" ? "Creating..." : "Create Login Account"}
+-              </button>
++              {allowCreateAccount ? (
++                <button
++                  onClick={() => runAction("create_login_account", "New login account")}
++                  disabled={actionLoading !== null}
++                  className="mt-3 w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
++                >
++                  {actionLoading === "create_login_account" ? "Creating..." : "Create Login Account"}
++                </button>
++              ) : (
++                <p className="mt-2 text-xs text-ink-500">
++                  This team member needs to sign up for an account first.
++                </p>
++              )}
+             </div>
+           </div>
+         )}
+@@ -199,7 +210,7 @@ export default function ManageLoginModal({
+                   Password change is pending — they&apos;ll be prompted at next sign-in.
+                 </p>
+               )}
+-              {info.accountStatus === "Disabled" && (
++              {info.accountStatus === "Disabled" && allowCreateAccount && (
+                 <p className="mt-2 text-xs text-ink-500">
+                   This login is disabled because the investor is deactivated.
+                   Use Reactivate on the investor card to re-enable it.
