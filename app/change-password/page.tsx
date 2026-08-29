@@ -17,27 +17,26 @@ export default async function ChangePasswordPage() {
     .eq("auth_user_id", user.id)
     .single();
 
-  // Middleware already enforces this gate for every /dashboard/* route,
-  // but a direct hit on this page when it isn't actually required should
-  // just bounce home rather than show a pointless form.
   if (!profile?.must_change_password) {
     redirect("/dashboard");
   }
 
   return (
-    <div className="mx-auto max-w-sm">
-      <div className="mb-5 text-center">
-        <div className="flex justify-center">
-          <SodharaBrand size="sm" />
+    <div className="flex min-h-screen items-center justify-center bg-surface-bg px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-5 text-center">
+          <div className="flex justify-center">
+            <SodharaBrand size="sm" />
+          </div>
+          <p className="mt-4 text-lg font-bold text-ink-900">
+            Your temporary password must be changed before continuing.
+          </p>
+          <p className="mt-1 text-sm text-ink-500">
+            Set a new password to access your dashboard.
+          </p>
         </div>
-        <p className="mt-4 text-lg font-bold text-ink-900">
-          Your temporary password must be changed before continuing.
-        </p>
-        <p className="mt-1 text-sm text-ink-500">
-          Set a new password to access your dashboard.
-        </p>
+        <ChangePasswordForm />
       </div>
-      <ChangePasswordForm />
     </div>
   );
 }

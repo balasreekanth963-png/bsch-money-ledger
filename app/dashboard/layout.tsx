@@ -22,9 +22,13 @@ export default async function DashboardLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, must_change_password")
     .eq("auth_user_id", user.id)
     .single();
+
+  if (profile?.must_change_password) {
+    redirect("/change-password");
+  }
 
   return (
     <div className="flex min-h-screen flex-col pb-20 md:pb-0">

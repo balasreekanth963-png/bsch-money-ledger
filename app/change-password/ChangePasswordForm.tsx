@@ -45,9 +45,6 @@ export default function ChangePasswordForm() {
 
     setLoading(true);
     try {
-      // Step 1: set the new password directly via Supabase Auth, using
-      // the investor's own active session (they're already signed in with
-      // the temporary password). No server route ever sees this value.
       const { error: updateErr } = await supabase.auth.updateUser({
         password: newPassword,
       });
@@ -57,8 +54,6 @@ export default function ChangePasswordForm() {
         return;
       }
 
-      // Step 2: clear the must_change_password flag so the gate lets them
-      // through from now on. This route never receives the password.
       const res = await fetch("/api/account/complete-password-change", {
         method: "POST",
       });
