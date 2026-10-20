@@ -1,0 +1,29 @@
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "0 6 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Supabase database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TABLE_NAME: ${{ secrets.SUPABASE_TABLE }}
+        run: |
+          [ -z "$SUPABASE_URL" ] && echo "SUPABASE_URL is EMPTY" && exit 1
+          [ -z "$SUPABASE_ANON_KEY" ] && echo "SUPABASE_ANON_KEY is EMPTY" && exit 1
+          [ -z "$TABLE_NAME" ] && echo "SUPABASE_TABLE is EMPTY" && exit 1
+          status=$(curl -s -o response.json -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/$TABLE_NAME?select=*&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" || true)
+          echo "HTTP status: $status"
+          cat response.json 2>/dev/null
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Ping failed"
+            exit 1
+          fi
